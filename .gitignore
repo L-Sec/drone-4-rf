@@ -1,0 +1,40 @@
+# --- Local RF data: NEVER commit -------------------------------------------
+# Baselines, event databases and IQ captures describe the radio environment
+# of the place they were recorded: neighbouring Wi-Fi networks, when people
+# are home and active, and equipment fingerprints. Treat them as personal
+# data and share them only deliberately (see CONTRIBUTING.md).
+data/
+*.npz
+*.joblib
+*.cf32
+*.cs8
+*.db
+*.db-wal
+*.db-shm
+
+# Site-specific configuration (copy config/local.example.yaml instead)
+config/local.yaml
+
+# --- Python ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+*.zip
+.pytest_cache/
+.pytest-tmp/
+.test-tmp/
+.pip-audit-cache/
+.coverage
+htmlcov/
+
+# --- Environments / editors ---------------------------------------------------
+.venv/
+.venv*/
+venv/
+env/
+.idea/
+.vscode/
+*.swp
+.DS_Store

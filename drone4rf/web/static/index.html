@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Drone 4-RF - passive RF scanner</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --line: #30363d; --text: #e6edf3;
+    --muted: #8b949e; --accent: #00d0ff; --thr: #ffcc00;
+    --possible: #f0a030; --probable: #e8722a; --high: #e5484d;
+    --unclassified: #9aa4af; --background-cat: #6e7681; --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.5 "Segoe UI", system-ui, sans-serif; }
+  header { border-bottom: 1px solid var(--line); background: var(--panel); }
+  .titlebar { display: flex; align-items: baseline; gap: 12px; padding: 10px 14px 4px; flex-wrap: wrap; }
+  .titlebar h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .frequency { color: var(--accent); font: 600 22px/1 Consolas, monospace;
+               letter-spacing: .04em; }
+  .ver { color: var(--muted); font-size: 12px; }
+  .notice { color: var(--muted); font-size: 11.5px; padding: 0 14px 8px; }
+  .notice b { color: #d8a657; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+              padding: 8px 14px; border-top: 1px solid var(--line); }
+  .band-controls input[type=text] { width: 180px; }
+  .band-controls input[type=number] { width: 92px; }
+  label { color: var(--muted); font-size: 12px; }
+  select, input[type=text], input[type=number], textarea { background: #0d1117; color: var(--text);
+    border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; }
+  button { background: #21262d; color: var(--text); border: 1px solid var(--line);
+    border-radius: 5px; padding: 5px 12px; font: inherit; cursor: pointer; }
+  button:hover:not(:disabled) { background: #30363d; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #1f6feb; }
+  button.primary:hover:not(:disabled) { background: #388bfd; }
+  button.danger { background: #8d2b2f; border-color: #a53c3c; }
+  .spacer { flex: 1; }
+  #health { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  #health .warn { color: var(--high); font-weight: 600; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 430px; gap: 10px;
+         padding: 10px; height: calc(100vh - 226px); }
+  @media (max-width: 1000px) { main { grid-template-columns: 1fr; height: auto; } }
+  .panel { background: var(--panel); border: 1px solid var(--line);
+           border-radius: 8px; overflow: hidden; display: flex; flex-direction: column; }
+  .panel h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+              color: var(--muted); margin: 0; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  .left { display: grid; grid-template-rows: .85fr 1.35fr .7fr; gap: 8px;
+          min-height: 0; }
+  canvas { width: 100%; display: block; flex: 1; min-height: 0; }
+  .plot-title { display:flex; align-items:center; gap:8px; min-height:35px; }
+  .plot-title .scope-controls { margin-left:auto; display:flex; gap:6px;
+                                align-items:center; text-transform:none;
+                                letter-spacing:0; }
+  .scope-controls input { width:64px; padding:2px 4px; }
+  .record-option { padding: 2px 5px; border: 1px solid var(--line);
+                   border-radius: 4px; }
+  #artifactInfo { max-width: 260px; overflow:hidden; text-overflow:ellipsis;
+                  white-space:nowrap; }
+
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tab { padding: 8px 14px; cursor: pointer; color: var(--muted); font-size: 12px;
+         border-bottom: 2px solid transparent; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tabbody { overflow: auto; flex: 1; padding: 8px 10px; }
+  .hidden { display: none; }
+
+  .card { border-left: 3px solid var(--unclassified); background: #0d1117;
+          border-radius: 4px; padding: 8px 10px; margin-bottom: 8px; }
+  .card .cat { font-weight: 600; font-size: 12px; letter-spacing: .03em; }
+  .card .meta { color: var(--muted); font-size: 11.5px; margin: 2px 0 5px; font-variant-numeric: tabular-nums; }
+  .card .expl { font-size: 12px; color: #c9d1d9; }
+  .chips { margin-top: 6px; display: flex; gap: 4px; flex-wrap: wrap; }
+  .chip { font-size: 10.5px; padding: 1px 6px; border-radius: 999px;
+          background: #21262d; color: var(--muted); }
+  .chip.pen { background: #3d1d1f; color: #f0a0a0; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px;
+          font-variant-numeric: tabular-nums; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 11px;
+       text-transform: uppercase; letter-spacing: .05em; padding: 4px 6px;
+       position: sticky; top: 0; background: var(--panel); }
+  td { padding: 3px 6px; border-top: 1px solid #21262d; }
+  td.num { text-align: right; }
+  .empty { color: var(--muted); font-size: 12px; padding: 12px 4px; }
+  .fb { font-size: 10.5px; padding: 1px 6px; margin-right: 3px; }
+  .fb.marked { color: var(--ok); }
+  .toolbar { display: flex; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  .toolbar input { min-width: 130px; }
+  .review-form { margin-top: 8px; padding: 8px; background: #161b22;
+                 border: 1px solid var(--line); border-radius: 5px; }
+  .review-grid { display: grid; grid-template-columns: 150px minmax(150px, 1fr);
+                 gap: 6px; align-items: center; }
+  .review-grid .wide { grid-column: 1 / -1; }
+  .review-actions { display: flex; gap: 7px; align-items: center; flex-wrap: wrap; }
+  .label-summary { color: var(--ok); font-size: 11px; }
+  .event-review td { padding: 0 6px 8px; }
+  .event-review .review-form { margin-top: 2px; }
+  @media (max-width: 650px) {
+    .review-grid { grid-template-columns: 1fr; }
+    .review-grid .wide { grid-column: auto; }
+  }
+  #toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%);
+           background: #21262d; border: 1px solid var(--line); border-radius: 6px;
+           padding: 8px 14px; font-size: 12px; opacity: 0; transition: opacity .2s;
+           pointer-events: none; max-width: 80vw; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <div class="titlebar">
+    <h1>Drone 4-RF</h1><span class="ver" id="version"></span>
+    <span class="frequency" id="frequencyReadout">-.-- MHz</span>
+    <span class="ver" id="devinfo"></span>
+  </div>
+  <div class="notice">
+    <b>⚠ Passive, receive-only.</b> You are responsible for complying with local
+    radio, aviation, surveillance, and privacy laws. Detections are probabilistic
+    indicators, never proof - this tool never reports a “confirmed drone”.
+  </div>
+  <div class="controls">
+    <label for="source">Source</label>
+    <select id="source"><option value="hackrf">HackRF</option><option value="sim">Simulator</option></select>
+    <label for="mode">Mode</label>
+    <select id="mode"><option value="sweep">Sweep</option><option value="scan">Single band</option></select>
+    <label for="env">Environment</label>
+    <select id="env"></select>
+    <label><input type="checkbox" id="frozen" checked /> frozen baseline</label>
+    <button id="startBtn" class="primary">Start</button>
+    <button id="calBtn" title="Learn the RF background, then press Stop to save">Calibrate</button>
+    <span class="spacer"></span>
+    <span id="health">idle</span>
+  </div>
+  <div class="controls band-controls" aria-label="Band search and spectrum span">
+    <strong class="ver">Band focus</strong>
+    <label for="bandSearch">Search</label>
+    <input id="bandSearch" type="text" list="bandPresets"
+      placeholder="band name or MHz" aria-label="Search configured bands or enter MHz" />
+    <datalist id="bandPresets"></datalist>
+    <button id="findBandBtn">Find</button>
+    <label for="focusCenter">Center MHz</label>
+    <input id="focusCenter" type="number" min="1" max="6000" step="0.001" />
+    <label for="viewSpan">Visible span MHz</label>
+    <input id="viewSpan" type="number" min="0.01" step="0.01" />
+    <button id="focusBtn" class="primary">Focus scan</button>
+    <button id="fullSpanBtn">Full span</button>
+    <span class="ver" id="bandInfo">search configured bands or enter a center frequency</span>
+  </div>
+  <div class="controls" aria-label="Workshop recording and replay">
+    <strong class="ver">Workshop session</strong>
+    <input id="sessionName" type="text" maxlength="80"
+      placeholder="session name (automatic)" aria-label="Workshop session name" />
+    <button id="recordBtn" disabled>Record</button>
+    <label class="record-option" title="Interleaved float32 I/Q for Inspectrum">
+      <input id="captureCf32" type="checkbox" /> CF32 (Inspectrum)</label>
+    <label class="record-option" title="Stereo PCM16: I left, Q right">
+      <input id="captureWav" type="checkbox" /> IQ/WAV</label>
+    <label class="record-option" title="Spectrum averages, detections, tracks and behavior">
+      <input id="captureCsv" type="checkbox" checked /> detector CSV</label>
+    <label for="sessions">Replay</label>
+    <select id="sessions"><option value="">No recordings</option></select>
+    <label for="replaySpeed">Speed</label>
+    <select id="replaySpeed">
+      <option value="0.5">0.5x</option><option value="1" selected>1x</option>
+      <option value="2">2x</option><option value="4">4x</option>
+      <option value="10">10x</option>
+    </select>
+    <button id="replayBtn">Replay</button>
+    <button id="stopReplayBtn" disabled>Stop replay</button>
+    <select id="artifacts" aria-label="Recorded artifact"><option value="">Artifacts</option></select>
+    <button id="downloadArtifactBtn" disabled>Download</button>
+    <span class="ver" id="artifactInfo">raw IQ is opt-in and can be very large</span>
+  </div>
+</header>
+
+<main>
+  <div class="left">
+    <div class="panel">
+      <h2 id="specTitle" class="plot-title"><span id="specLabel">Spectrum</span>
+        <span class="scope-controls"><span id="cursorReadout">move cursor to measure</span></span></h2>
+      <canvas id="spectrum"></canvas>
+    </div>
+    <div class="panel">
+      <h2 class="plot-title"><span>Waterfall</span><span class="scope-controls">
+        <label>floor <input id="dbMin" type="number" value="-110" min="-160" max="-20" step="5" /></label>
+        <label>ceiling <input id="dbMax" type="number" value="-30" min="-140" max="20" step="5" /></label>
+        <button id="pauseWaterfall">Pause</button><button id="clearWaterfall">Clear</button>
+      </span></h2>
+      <canvas id="waterfall" width="1024" height="256"></canvas>
+    </div>
+    <div class="panel">
+      <h2 class="plot-title"><span>IQ waveform</span><span class="scope-controls">
+        <span style="color:#00d0ff">I</span><span style="color:#ff7ad9">Q</span>
+        <span id="waveMeta"></span></span></h2>
+      <canvas id="waveform"></canvas>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="tabs">
+      <div class="tab active" data-tab="assess">Assessments</div>
+      <div class="tab" data-tab="tracks">Tracks</div>
+      <div class="tab" data-tab="events">Refining</div>
+    </div>
+    <div class="tabbody" id="tab-assess">
+      <div class="empty" id="assessEmpty">No assessments yet. Elevated activity appears here with its full explanation.</div>
+      <div id="assessList"></div>
+    </div>
+    <div class="tabbody hidden" id="tab-tracks">
+      <table><thead><tr><th>MHz</th><th class="num">BW kHz</th><th class="num">SNR</th>
+        <th class="num">hits</th><th class="num">occ</th><th>detectors</th></tr></thead>
+        <tbody id="tracksBody"></tbody></table>
+      <div class="empty" id="tracksEmpty">No active tracks.</div>
+    </div>
+    <div class="tabbody hidden" id="tab-events" style="padding:0">
+      <div class="toolbar">
+        <button id="refreshEvents">Refresh</button>
+        <label for="contributor" style="align-self:center">Contributor</label>
+        <input id="contributor" type="text" maxlength="100" placeholder="handle (optional)" />
+        <button id="exportLabels">Export labels</button>
+        <button id="exportSignatures">Export RF signatures</button>
+        <span class="ver" style="align-self:center">review live RF signatures</span>
+      </div>
+      <div style="padding:8px 10px">
+        <table><thead><tr><th>id</th><th>time</th><th>kind</th><th class="num">MHz</th>
+          <th>detector label</th><th>survey verdict</th></tr></thead>
+          <tbody id="eventsBody"></tbody></table>
+      </div>
+    </div>
+  </div>
+</main>
+<div id="toast"></div>
+<datalist id="droneModelSuggestions"></datalist>
+
+<script>
+const TOKEN = "__DW_TOKEN__";
+const LABEL_VOCAB = __DW_LABEL_VOCAB__;
+const $ = (id) => document.getElementById(id);
+const CAT_COLOR = {
+  background_activity: "var(--background-cat)",
+  unclassified_rf_activity: "var(--unclassified)",
+  possible_drone_activity: "var(--possible)",
+  probable_drone_activity: "var(--probable)",
+  high_confidence_drone_activity: "var(--high)",
+};
+let DB_MIN = -110, DB_MAX = -30;
+let running = false;
+let recording = false;
+let replaying = false;
+let eventSource = null;
+let waterfallPaused = false;
+let sessionCatalog = [];
+let deviceSampleRateMsps = 0;
+let bandCatalog = [];
+let viewSpanMhz = 0;
+
+/* ---------- helpers ---------- */
+function toast(msg, ms = 3200) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), ms);
+}
+async function post(path, body) {
+  const r = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-DW-Token": TOKEN },
+    body: JSON.stringify(body || {}),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (r.status === 403 && /token/i.test(data.error || "")) {
+    // The server restarted and issued a new token: this page is stale.
+    throw new Error("server restarted - reload this page (F5) to reconnect");
+  }
+  if (!r.ok) throw new Error(data.error || ("HTTP " + r.status));
+  return data;
+}
+function esc(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+function human(value) { return String(value || "").replace(/_/g, " "); }
+function labelSummary(label) {
+  if (!label || !label.verdict) return "unreviewed";
+  let detail = human(label.verdict);
+  if (label.verdict === "confirmed_drone" && label.drone_model)
+    detail += ` / ${label.drone_model}`;
+  if (label.verdict === "false_positive" && label.fp_class) {
+    detail += ` / ${human(label.fp_class)}`;
+    if (label.fp_class_detail) detail += `: ${label.fp_class_detail}`;
+  }
+  if (label.labeled_by) detail += ` / by ${label.labeled_by}`;
+  return detail;
+}
+
+function reviewForm(eventId, label) {
+  const current = label || {};
+  const verdictOptions = [`<option value="">Choose verdict...</option>`]
+    .concat(LABEL_VOCAB.verdicts.map((value) =>
+      `<option value="${esc(value)}" ${current.verdict === value ? "selected" : ""}>${esc(human(value))}</option>`));
+  const fpOptions = [`<option value="">Choose device class...</option>`]
+    .concat(LABEL_VOCAB.fp_classes.map((value) =>
+      `<option value="${esc(value)}" ${current.fp_class === value ? "selected" : ""}>${esc(human(value))}</option>`));
+  return `<form class="review-form" data-event-id="${eventId}" data-testid="review-form-${eventId}">
+    <div class="review-grid">
+      <label>Verdict</label><select name="verdict" aria-label="Verdict for event ${eventId}" required>${verdictOptions.join("")}</select>
+      <label class="model-field">Drone model</label>
+      <input class="model-field" name="drone_model" type="text" maxlength="200"
+        aria-label="Drone model for event ${eventId}" list="droneModelSuggestions"
+        value="${esc(current.drone_model || "")}" placeholder="choose or type a model" />
+      <label class="fp-field">False-positive device</label>
+      <select class="fp-field" name="fp_class" aria-label="False-positive class for event ${eventId}">${fpOptions.join("")}</select>
+      <label class="fp-detail-field">Other device</label>
+      <input class="fp-detail-field" name="fp_class_detail" type="text" maxlength="200"
+        aria-label="Other false-positive device for event ${eventId}"
+        value="${esc(current.fp_class_detail || "")}" placeholder="describe the other emitter" />
+      <label>Notes</label><input name="label_notes" type="text" maxlength="2000"
+        aria-label="Notes for event ${eventId}" value="${esc(current.label_notes || "")}" placeholder="optional survey notes" />
+      <div class="wide review-actions">
+        <button class="primary" type="submit">Save label</button>
+        <span class="label-summary">${esc(labelSummary(current))}</span>
+      </div>
+    </div>
+  </form>`;
+}
+
+function updateReviewFields(form) {
+  const verdict = form.elements.verdict.value;
+  const fpClass = form.elements.fp_class.value;
+  form.querySelectorAll(".model-field").forEach((el) =>
+    el.classList.toggle("hidden", verdict !== "confirmed_drone"));
+  form.querySelectorAll(".fp-field").forEach((el) =>
+    el.classList.toggle("hidden", verdict !== "false_positive"));
+  form.querySelectorAll(".fp-detail-field").forEach((el) =>
+    el.classList.toggle("hidden", verdict !== "false_positive" || fpClass !== "other"));
+  form.elements.drone_model.required = verdict === "confirmed_drone";
+  form.elements.fp_class.required = verdict === "false_positive";
+}
+
+function wireReviewForms(root) {
+  root.querySelectorAll("form.review-form").forEach((form) => {
+    updateReviewFields(form);
+    form.elements.verdict.onchange = () => updateReviewFields(form);
+    form.elements.fp_class.onchange = () => updateReviewFields(form);
+    form.onsubmit = async (event) => {
+      event.preventDefault();
+      const payload = {
+        event_id: +form.dataset.eventId,
+        verdict: form.elements.verdict.value,
+        drone_model: form.elements.drone_model.value,
+        fp_class: form.elements.fp_class.value,
+        fp_class_detail: form.elements.fp_class_detail.value,
+        label_notes: form.elements.label_notes.value,
+        labeled_by: $("contributor").value,
+      };
+      try {
+        const result = await post("/api/feedback", payload);
+        form.querySelector(".label-summary").textContent = labelSummary(result.label);
+        toast(`event ${payload.event_id} label saved`);
+      } catch (err) { toast("error: " + err.message); }
+    };
+  });
+}
+
+/* ---------- inferno-like colormap ---------- */
+const LUT = (() => {
+  const stops = [[0,0,4],[31,12,72],[85,15,109],[136,34,106],[186,54,85],
+                 [227,89,51],[249,140,10],[249,201,50],[252,255,164]];
+  const lut = new Uint8Array(256 * 3);
+  for (let i = 0; i < 256; i++) {
+    const x = (i / 255) * (stops.length - 1);
+    const k = Math.min(Math.floor(x), stops.length - 2), f = x - k;
+    for (let c = 0; c < 3; c++)
+      lut[i*3+c] = stops[k][c] + f * (stops[k+1][c] - stops[k][c]);
+  }
+  return lut;
+})();
+
+/* ---------- spectrum ---------- */
+const specCanvas = $("spectrum"), specCtx = specCanvas.getContext("2d");
+let lastFrame = null;
+
+function sizeSpectrum() {
+  const dpr = window.devicePixelRatio || 1;
+  specCanvas.width = Math.max(300, specCanvas.clientWidth * dpr);
+  specCanvas.height = Math.max(150, specCanvas.clientHeight * dpr);
+  waveCanvas.width = Math.max(300, waveCanvas.clientWidth * dpr);
+  waveCanvas.height = Math.max(100, waveCanvas.clientHeight * dpr);
+  if (lastFrame) drawSpectrum(lastFrame);
+  if (lastWaveform) drawWaveform(lastWaveform);
+}
+window.addEventListener("resize", sizeSpectrum);
+
+function drawSpectrum(f) {
+  const view = visibleFrame(f);
+  const W = specCanvas.width, H = specCanvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const padL = 46 * dpr, padB = 20 * dpr, padT = 8 * dpr, padR = 8 * dpr;
+  const pw = W - padL - padR, ph = H - padT - padB;
+  const yOf = (db) => padT + ph * (1 - (db - DB_MIN) / (DB_MAX - DB_MIN));
+  const xOf = (i, n) => padL + (pw * i) / Math.max(1, n - 1);
+
+  specCtx.clearRect(0, 0, W, H);
+  specCtx.font = `${11 * dpr}px system-ui`;
+  specCtx.lineWidth = dpr;
+
+  // dB grid
+  specCtx.strokeStyle = "#21262d"; specCtx.fillStyle = "#8b949e";
+  specCtx.textAlign = "right"; specCtx.textBaseline = "middle";
+  for (let db = DB_MAX; db >= DB_MIN; db -= 20) {
+    const y = yOf(db);
+    specCtx.beginPath(); specCtx.moveTo(padL, y); specCtx.lineTo(W - padR, y); specCtx.stroke();
+    specCtx.fillText(db + " dB", padL - 6 * dpr, y);
+  }
+  // frequency ticks
+  specCtx.textAlign = "center"; specCtx.textBaseline = "top";
+  for (let k = 0; k <= 4; k++) {
+    const x = padL + (pw * k) / 4;
+    const mhz = view.f0_mhz + ((view.f1_mhz - view.f0_mhz) * k) / 4;
+    specCtx.beginPath(); specCtx.moveTo(x, padT); specCtx.lineTo(x, padT + ph); specCtx.stroke();
+    specCtx.fillText(mhz.toFixed(2), x, padT + ph + 4 * dpr);
+  }
+  // threshold
+  if (view.thr) {
+    specCtx.strokeStyle = "var(--thr)"; specCtx.strokeStyle = "#ffcc00";
+    specCtx.setLineDash([4 * dpr, 4 * dpr]); specCtx.beginPath();
+    view.thr.forEach((v, i) => i ? specCtx.lineTo(xOf(i, view.thr.length), yOf(v))
+                                 : specCtx.moveTo(xOf(i, view.thr.length), yOf(v)));
+    specCtx.stroke(); specCtx.setLineDash([]);
+  }
+  // PSD
+  specCtx.strokeStyle = "#00d0ff"; specCtx.beginPath();
+  view.psd.forEach((v, i) => i ? specCtx.lineTo(xOf(i, view.psd.length), yOf(v))
+                               : specCtx.moveTo(xOf(i, view.psd.length), yOf(v)));
+  specCtx.stroke();
+}
+
+/* ---------- waterfall ---------- */
+const wfCanvas = $("waterfall"), wfCtx = wfCanvas.getContext("2d");
+let wfImage = null, wfViewKey = null;
+
+function visibleFrame(f) {
+  const fullSpan = f.f1_mhz - f.f0_mhz;
+  const span = Math.min(fullSpan, Math.max(0.01, viewSpanMhz || fullSpan));
+  const count = f.psd.length;
+  const first = Math.max(0, Math.floor((count - 1) * (fullSpan - span) / (2 * fullSpan)));
+  const last = Math.min(count, Math.ceil(count - first));
+  const step = fullSpan / Math.max(1, count - 1);
+  return {
+    psd: f.psd.slice(first, last),
+    thr: f.thr ? f.thr.slice(first, last) : null,
+    f0_mhz: f.f0_mhz + first * step,
+    f1_mhz: f.f0_mhz + Math.max(first, last - 1) * step,
+  };
+}
+
+function pushWaterfall(f) {
+  if (waterfallPaused) return;
+  const view = visibleFrame(f);
+  const n = view.psd.length;
+  const key = `${f.center_mhz}:${view.f0_mhz}:${view.f1_mhz}`;
+  if (!wfImage || wfImage.width !== n || wfViewKey !== key) {
+    wfCanvas.width = n;
+    wfImage = wfCtx.createImageData(n, wfCanvas.height);
+    wfImage.data.fill(0);
+    for (let i = 3; i < wfImage.data.length; i += 4) wfImage.data[i] = 255;
+    wfViewKey = key;
+  }
+  const rowBytes = n * 4, d = wfImage.data;
+  d.copyWithin(rowBytes, 0, d.length - rowBytes);   // scroll down one row
+  for (let i = 0; i < n; i++) {
+    let t = (view.psd[i] - DB_MIN) / (DB_MAX - DB_MIN);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const c = (Math.round(t * 255) | 0) * 3, o = i * 4;
+    d[o] = LUT[c]; d[o+1] = LUT[c+1]; d[o+2] = LUT[c+2]; d[o+3] = 255;
+  }
+  wfCtx.putImageData(wfImage, 0, 0);
+}
+
+/* ---------- IQ waveform ---------- */
+const waveCanvas = $("waveform"), waveCtx = waveCanvas.getContext("2d");
+let lastWaveform = null;
+
+function drawWaveform(frame) {
+  const W = waveCanvas.width, H = waveCanvas.height;
+  const dpr = window.devicePixelRatio || 1;
+  const mid = H / 2, scale = H * .42;
+  waveCtx.clearRect(0, 0, W, H);
+  waveCtx.strokeStyle = "#30363d"; waveCtx.lineWidth = dpr;
+  waveCtx.beginPath(); waveCtx.moveTo(0, mid); waveCtx.lineTo(W, mid); waveCtx.stroke();
+  const draw = (values, color) => {
+    waveCtx.strokeStyle = color; waveCtx.beginPath();
+    values.forEach((value, index) => {
+      const x = index * W / Math.max(1, values.length - 1);
+      const y = mid - value * scale;
+      if (index) waveCtx.lineTo(x, y); else waveCtx.moveTo(x, y);
+    });
+    waveCtx.stroke();
+  };
+  draw(frame.i, "#00d0ff"); draw(frame.q, "#ff7ad9");
+  const windowText = frame.window_us == null ? "" : ` · ${frame.window_us.toFixed(1)} µs`;
+  $("waveMeta").textContent = `${frame.sample_rate_msps.toFixed(2)} MS/s${windowText} · ${frame.i.length} points`;
+}
+
+function updateCursor(event) {
+  if (!lastFrame) return;
+  const view = visibleFrame(lastFrame);
+  const rect = specCanvas.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const mhz = view.f0_mhz + fraction * (view.f1_mhz - view.f0_mhz);
+  const index = Math.min(view.psd.length - 1, Math.round(fraction * (view.psd.length - 1)));
+  $("cursorReadout").textContent = `${mhz.toFixed(4)} MHz · ${view.psd[index].toFixed(1)} dBFS`;
+}
+specCanvas.addEventListener("mousemove", updateCursor);
+wfCanvas.addEventListener("mousemove", (event) => {
+  if (!lastFrame) return;
+  const view = visibleFrame(lastFrame);
+  const rect = wfCanvas.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const mhz = view.f0_mhz + fraction * (view.f1_mhz - view.f0_mhz);
+  $("cursorReadout").textContent = `${mhz.toFixed(4)} MHz`;
+});
+
+/* ---------- live stream ---------- */
+function connect() {
+  if (eventSource) eventSource.close();
+  eventSource = new EventSource("/api/stream");
+  eventSource.addEventListener("spectrum", (e) => {
+    const f = JSON.parse(e.data);
+    lastFrame = f;
+    $("frequencyReadout").textContent = `${f.center_mhz.toFixed(3)} MHz`;
+    $("specLabel").textContent =
+      `Spectrum - ${(f.center_mhz / 1000).toFixed(4)} GHz` +
+      (f.noise_db !== null ? `  ·  noise ${f.noise_db.toFixed(1)} dBFS` : "");
+    drawSpectrum(f);
+    pushWaterfall(f);
+  });
+  eventSource.addEventListener("waveform", (e) => {
+    lastWaveform = JSON.parse(e.data);
+    drawWaveform(lastWaveform);
+  });
+  eventSource.addEventListener("state", (e) => renderState(JSON.parse(e.data)));
+  eventSource.onerror = () => $("health").textContent = "reconnecting…";
+}
+
+function renderState(s) {
+  running = s.running;
+  recording = !!s.recording;
+  replaying = !!s.replaying;
+  $("startBtn").textContent = running ? "Stop" : "Start";
+  $("startBtn").classList.toggle("danger", running);
+  $("startBtn").classList.toggle("primary", !running);
+  $("calBtn").disabled = running;
+  $("source").disabled = running || recording;
+  $("mode").disabled = running || recording;
+  $("env").disabled = running || recording;
+  $("frozen").disabled = running || recording;
+  $("focusCenter").disabled = recording || replaying;
+  $("focusBtn").disabled = recording || replaying;
+  $("recordBtn").disabled = !running && !recording;
+  $("recordBtn").textContent = recording ? "Stop recording" : "Record";
+  $("recordBtn").classList.toggle("danger", recording);
+  $("replayBtn").disabled = running || replaying || !$("sessions").value;
+  $("stopReplayBtn").disabled = !replaying;
+  updateCaptureControls();
+
+  const st = s.stats;
+  let html = s.status;
+  if (st) {
+    html += `  ·  tuned ${st.tuned_mhz ? (st.tuned_mhz/1000).toFixed(4) + " GHz" : "-"}`
+          + `  ·  chunks ${st.chunks}  det ${st.detections}`
+          + `  ·  drops ${st.drops}  ovf ${st.overflows}`;
+    if (st.clipped) html += `  ·  <span class="warn">⚠ CLIPPING</span>`;
+  }
+  if (s.error) html += `  ·  <span class="warn">${s.error}</span>`;
+  $("health").innerHTML = html;
+
+  const tb = $("tracksBody");
+  tb.innerHTML = s.tracks.map((t) =>
+    `<tr><td>${t.mhz.toFixed(4)}</td><td class="num">${t.bw_khz}</td>
+     <td class="num">${t.snr}</td><td class="num">${t.hits}</td>
+     <td class="num">${t.occupancy}</td><td>${t.detectors}</td></tr>`).join("");
+  $("tracksEmpty").classList.toggle("hidden", s.tracks.length > 0);
+
+  if (s.assessments.length) {
+    $("assessEmpty").classList.add("hidden");
+    const list = $("assessList");
+    for (const a of s.assessments) {
+      const div = document.createElement("div");
+      div.className = "card";
+      div.style.borderLeftColor = CAT_COLOR[a.category] || "var(--unclassified)";
+      const chips = Object.entries(a.evidence).map(([k, v]) =>
+          `<span class="chip">${k} ${v}</span>`).join("")
+        + Object.entries(a.penalties).map(([k, v]) =>
+          `<span class="chip pen">−${k} ${v}</span>`).join("");
+      div.innerHTML =
+        `<div class="cat" style="color:${CAT_COLOR[a.category]}">${esc(a.category.replace(/_/g," ").toUpperCase())}</div>
+         <div class="meta">${a.time} · ${(a.center_mhz/1000).toFixed(4)} GHz ·
+           span ${a.span_mhz} MHz · confidence ${a.confidence.toFixed(2)} ·
+           ${esc(a.entity)}, ${a.observations} obs, event ${a.event_id}</div>
+         <div class="expl">${esc(a.explanation)}</div><div class="chips">${chips}</div>
+         ${s.replaying ? '<div class="label-summary">recorded workshop replay</div>' : reviewForm(a.event_id, null)}`;
+      wireReviewForms(div);
+      list.prepend(div);
+    }
+    while (list.children.length > 120) list.removeChild(list.lastChild);
+  }
+}
+
+/* ---------- events tab ---------- */
+async function loadEvents() {
+  const r = await fetch("/api/events");
+  const { events } = await r.json();
+  $("eventsBody").innerHTML = events.map((e) => {
+    return `<tr><td>${e.id}</td><td>${(e.ts_local||"").slice(11,19)}</td>
+      <td>${esc(e.kind)}</td><td class="num">${(e.center_hz/1e6).toFixed(3)}</td>
+      <td>${esc(human(e.confidence_label))}</td>
+      <td class="label-summary">${esc(labelSummary(e))}</td></tr>
+      <tr class="event-review"><td colspan="6">${reviewForm(e.id, e)}</td></tr>`;
+  }).join("");
+  wireReviewForms($("eventsBody"));
+}
+
+/* ---------- controls ---------- */
+$("contributor").onchange = () => {
+  try { localStorage.setItem("drone4rfContributor", $("contributor").value); }
+  catch (_) { /* private browsing may disable storage */ }
+};
+async function downloadExport(path, key, filename, label) {
+  try {
+    const response = await fetch(path, {
+      headers: { "X-DW-Token": TOKEN },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || ("HTTP " + response.status));
+    const records = data[key];
+    const blob = new Blob([JSON.stringify(records, null, 2) + "\n"],
+      {type: "application/json"});
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+    toast(`exported ${records.length} ${label}`);
+  } catch (err) { toast("error: " + err.message); }
+}
+$("exportLabels").onclick = () => downloadExport(
+  "/api/labels/export?format=json", "labels", "drone4rf-labels.json", "labels");
+$("exportSignatures").onclick = () => downloadExport(
+  "/api/signatures/export?format=json", "signatures",
+  "drone4rf-rf-signatures.json", "RF signatures");
+
+async function loadSessions() {
+  const response = await fetch("/api/sessions", {
+    headers: {"X-DW-Token": TOKEN},
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || ("HTTP " + response.status));
+  sessionCatalog = data.sessions;
+  const previous = $("sessions").value;
+  $("sessions").innerHTML = data.sessions.length
+    ? data.sessions.map((item) => {
+        const duration = item.duration_s == null
+          ? "incomplete" : `${item.duration_s.toFixed(1)}s`;
+        return `<option value="${esc(item.name)}">${esc(item.name)} (${duration})</option>`;
+      }).join("")
+    : '<option value="">No recordings</option>';
+  if ([...$("sessions").options].some((option) => option.value === previous))
+    $("sessions").value = previous;
+  $("replayBtn").disabled = running || replaying || !$("sessions").value;
+  updateArtifacts();
+}
+
+function bytes(value) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`;
+  if (value < 1024 ** 3) return `${(value / 1024 ** 2).toFixed(1)} MiB`;
+  return `${(value / 1024 ** 3).toFixed(2)} GiB`;
+}
+
+function updateArtifacts() {
+  const session = sessionCatalog.find((item) => item.name === $("sessions").value);
+  const artifacts = session ? (session.artifacts || []) : [];
+  $("artifacts").innerHTML = artifacts.length
+    ? artifacts.map((item) =>
+        `<option value="${esc(item.name)}">${esc(item.kind)} · ${bytes(item.size_bytes)}</option>`
+      ).join("")
+    : '<option value="">No sidecar artifacts</option>';
+  $("downloadArtifactBtn").disabled = !$("artifacts").value;
+  if (session && session.iq_dropped_chunks)
+    $("artifactInfo").textContent = `warning: ${session.iq_dropped_chunks} IQ chunks dropped`;
+  else if (session && session.iq_error)
+    $("artifactInfo").textContent = `IQ writer: ${session.iq_error}`;
+  else
+    $("artifactInfo").textContent = "raw IQ is opt-in and can be very large";
+}
+
+async function downloadArtifact() {
+  const filename = $("artifacts").value;
+  if (!filename) return;
+  const url = "/api/sessions/artifact?session="
+    + encodeURIComponent($("sessions").value) + "&file=" + encodeURIComponent(filename);
+  try {
+    let handle = null;
+    if (window.showSaveFilePicker) {
+      handle = await window.showSaveFilePicker({suggestedName: filename});
+    }
+    const response = await fetch(url, {headers: {"X-DW-Token": TOKEN}});
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || ("HTTP " + response.status));
+    }
+    if (handle && response.body) {
+      const writable = await handle.createWritable();
+      await response.body.pipeTo(writable);
+    } else {
+      const blob = await response.blob();
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob); link.download = filename; link.click();
+      URL.revokeObjectURL(link.href);
+    }
+    toast(`downloaded ${filename}`);
+  } catch (error) {
+    if (error.name !== "AbortError") toast("error: " + error.message);
+  }
+}
+
+function updateCaptureControls() {
+  const rawAllowed = $("mode").value === "scan" && !recording;
+  $("captureCf32").disabled = !rawAllowed;
+  $("captureWav").disabled = !rawAllowed;
+  $("captureCsv").disabled = recording;
+  if (!rawAllowed && !recording) {
+    $("captureCf32").checked = false;
+    $("captureWav").checked = false;
+  }
+  if (!recording) {
+    let rate = 0;
+    if ($("captureCf32").checked) rate += deviceSampleRateMsps * 8;
+    if ($("captureWav").checked) rate += deviceSampleRateMsps * 4;
+    $("artifactInfo").textContent = rate
+      ? `estimated raw write rate: ${rate.toFixed(0)} MB/s`
+      : "raw IQ is opt-in and can be very large";
+  }
+}
+
+$("recordBtn").onclick = async () => {
+  try {
+    if (recording) {
+      const result = await post("/api/session/record/stop");
+      recording = false;
+      toast(`recording saved (${result.counts.spectrum || 0} waterfall frames)`);
+      await loadSessions();
+    } else {
+      const result = await post("/api/session/record/start", {
+        name: $("sessionName").value,
+        source: $("source").value,
+        environment: $("env").value || "default",
+        capture_cf32: $("captureCf32").checked,
+        capture_wav: $("captureWav").checked,
+        capture_csv: $("captureCsv").checked,
+      });
+      recording = true;
+      $("sessionName").value = result.name;
+      toast(`recording ${result.name}`);
+    }
+    $("recordBtn").textContent = recording ? "Stop recording" : "Record";
+    $("recordBtn").classList.toggle("danger", recording);
+    updateCaptureControls();
+  } catch (e) { toast("error: " + e.message); }
+};
+
+$("replayBtn").onclick = async () => {
+  try {
+    await post("/api/session/replay/start", {
+      name: $("sessions").value, speed: +$("replaySpeed").value,
+    });
+    replaying = true;
+    connect();
+    toast(`replaying ${$("sessions").value}`);
+  } catch (e) { toast("error: " + e.message); }
+};
+$("stopReplayBtn").onclick = async () => {
+  try {
+    await post("/api/session/replay/stop");
+    replaying = false;
+    connect();
+    toast("replay stopped");
+  } catch (e) { toast("error: " + e.message); }
+};
+$("sessions").onchange = () => {
+  $("replayBtn").disabled = running || replaying || !$("sessions").value;
+  updateArtifacts();
+};
+$("artifacts").onchange = () => {
+  $("downloadArtifactBtn").disabled = !$("artifacts").value;
+};
+$("downloadArtifactBtn").onclick = downloadArtifact;
+$("mode").onchange = updateCaptureControls;
+$("captureCf32").onchange = updateCaptureControls;
+$("captureWav").onchange = updateCaptureControls;
+
+$("pauseWaterfall").onclick = () => {
+  waterfallPaused = !waterfallPaused;
+  $("pauseWaterfall").textContent = waterfallPaused ? "Resume" : "Pause";
+};
+$("clearWaterfall").onclick = () => {
+  wfImage = null; wfViewKey = null;
+  wfCtx.clearRect(0, 0, wfCanvas.width, wfCanvas.height);
+};
+function updateDbRange() {
+  const low = +$("dbMin").value, high = +$("dbMax").value;
+  if (low < high) { DB_MIN = low; DB_MAX = high; }
+  if (lastFrame) drawSpectrum(lastFrame);
+}
+$("dbMin").onchange = updateDbRange;
+$("dbMax").onchange = updateDbRange;
+
+function applyBandSearch() {
+  const query = $("bandSearch").value.trim();
+  const numeric = Number(query);
+  let center = Number.isFinite(numeric) && query !== "" ? numeric : null;
+  let span = deviceSampleRateMsps;
+  let label = "custom center";
+  if (center === null) {
+    const needle = query.toLowerCase();
+    const matches = bandCatalog.filter((band) =>
+      band.name.toLowerCase() === needle || band.name.toLowerCase().includes(needle));
+    if (!matches.length) throw new Error(`no configured band matches “${query}”`);
+    const band = matches.find((item) => item.name.toLowerCase() === needle) || matches[0];
+    center = (band.start_mhz + band.stop_mhz) / 2;
+    span = Math.min(deviceSampleRateMsps, band.stop_mhz - band.start_mhz);
+    label = `${band.name}: ${band.start_mhz.toFixed(3)}–${band.stop_mhz.toFixed(3)} MHz`;
+    if (band.stop_mhz - band.start_mhz > deviceSampleRateMsps)
+      label += " · receiver view covers the centered sample-rate window";
+  }
+  if (!(center >= 1 && center <= 6000))
+    throw new Error("center frequency must be between 1 and 6000 MHz");
+  $("focusCenter").value = center.toFixed(3);
+  $("viewSpan").value = span.toFixed(3);
+  viewSpanMhz = span;
+  $("bandInfo").textContent = label;
+  wfImage = null; wfViewKey = null;
+  if (lastFrame) drawSpectrum(lastFrame);
+}
+
+$("findBandBtn").onclick = () => {
+  try { applyBandSearch(); } catch (error) { toast("error: " + error.message); }
+};
+$("bandSearch").onkeydown = (event) => {
+  if (event.key === "Enter") { event.preventDefault(); $("findBandBtn").click(); }
+};
+function updateViewSpan() {
+  const span = +$("viewSpan").value;
+  if (!(span > 0)) return;
+  viewSpanMhz = Math.min(span, deviceSampleRateMsps);
+  wfImage = null; wfViewKey = null;
+  if (lastFrame) drawSpectrum(lastFrame);
+}
+$("viewSpan").oninput = updateViewSpan;
+$("viewSpan").onchange = () => {
+  if (!(+$("viewSpan").value > 0)) {
+    $("viewSpan").value = viewSpanMhz.toFixed(3);
+    toast("error: visible span must be positive");
+  } else {
+    $("viewSpan").value = viewSpanMhz.toFixed(3);
+  }
+};
+$("fullSpanBtn").onclick = () => {
+  $("viewSpan").value = deviceSampleRateMsps.toFixed(3);
+  updateViewSpan();
+};
+
+async function startScan(calibrate = false) {
+  const mode = $("mode").value;
+  const center = +$("focusCenter").value;
+  return post("/api/start", {
+    source: $("source").value, mode,
+    environment: $("env").value || "default",
+    frozen: calibrate ? false : $("frozen").checked, calibrate,
+    center_mhz: mode === "scan" ? center : null,
+  });
+}
+
+$("focusBtn").onclick = async () => {
+  try {
+    const center = +$("focusCenter").value;
+    if (!(center >= 1 && center <= 6000))
+      throw new Error("center frequency must be between 1 and 6000 MHz");
+    if (running) await post("/api/stop");
+    $("mode").value = "scan";
+    $("frozen").checked = false;
+    updateCaptureControls();
+    await startScan(false);
+    toast(`focused scan at ${center.toFixed(3)} MHz`);
+  } catch (e) { toast("error: " + e.message); }
+};
+
+$("startBtn").onclick = async () => {
+  try {
+    if (running) { await post("/api/stop"); toast("stopped"); }
+    else {
+      await startScan(false);
+      toast("scanning");
+    }
+  } catch (e) { toast("error: " + e.message); }
+};
+$("calBtn").onclick = async () => {
+  try {
+    await startScan(true);
+    toast("calibrating - press Stop when done to save the environment");
+  } catch (e) { toast("error: " + e.message); }
+};
+$("refreshEvents").onclick = loadEvents;
+document.querySelectorAll(".tab").forEach((t) => t.onclick = () => {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+  t.classList.add("active");
+  ["assess","tracks","events"].forEach((n) =>
+    $("tab-" + n).classList.toggle("hidden", n !== t.dataset.tab));
+  if (t.dataset.tab === "events") loadEvents();
+});
+
+/* ---------- boot ---------- */
+(async function init() {
+  $("droneModelSuggestions").innerHTML = LABEL_VOCAB.drone_models
+    .map((model) => `<option value="${esc(model)}"></option>`).join("");
+  try { $("contributor").value = localStorage.getItem("drone4rfContributor") || ""; }
+  catch (_) { /* private browsing may disable storage */ }
+  const s = await (await fetch("/api/status")).json();
+  deviceSampleRateMsps = s.device.sample_rate_msps;
+  bandCatalog = s.bands;
+  viewSpanMhz = deviceSampleRateMsps;
+  $("focusCenter").value = s.device.center_mhz.toFixed(3);
+  $("viewSpan").value = viewSpanMhz.toFixed(3);
+  $("bandPresets").innerHTML = bandCatalog.map((band) =>
+    `<option value="${esc(band.name)}">${band.start_mhz.toFixed(3)}–${band.stop_mhz.toFixed(3)} MHz</option>`
+  ).join("");
+  $("version").textContent = "v" + s.version;
+  $("devinfo").textContent =
+    `${s.device.driver} · ${s.device.sample_rate_msps.toFixed(1)} MS/s · `
+    + `LNA ${s.device.lna_db} dB / VGA ${s.device.vga_db} dB · `
+    + (s.bands.length ? s.bands.map((b) => b.name).join(", ") : "single band")
+    + (s.ml_enabled ? " · ML on" : "");
+  const env = $("env");
+  env.innerHTML = (s.environments.length ? s.environments : ["default"])
+    .map((e) => `<option>${e}</option>`).join("");
+  await loadSessions();
+  updateCaptureControls();
+  sizeSpectrum();
+  connect();
+})();
+</script>
+</body>
+</html>

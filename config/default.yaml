@@ -1,0 +1,203 @@
+# drone4rf default configuration
+#
+# All values are validated at load time (see drone4rf/config.py).
+# Frequencies are in Hz, gains in dB, times in seconds.
+#
+# LEGAL NOTICE: You are responsible for complying with local radio,
+# aviation, surveillance, and privacy laws. This tool is receive-only.
+
+device:
+  # SoapySDR driver key: hackrf | rtlsdr | airspy | lime | uhd | sdrplay
+  driver: hackrf
+  # HackRF supports 2-20 MS/s; below ~8 MS/s its baseband filters degrade.
+  sample_rate: 10000000
+  # Default: middle of the 2.4 GHz ISM band (Wi-Fi channel 6 region).
+  center_freq_hz: 2437000000
+  # HackRF LNA (IF) gain: 0-40 dB in 8 dB steps. Conservative default.
+  lna_gain_db: 16
+  # HackRF VGA (baseband) gain: 0-62 dB in 2 dB steps.
+  vga_gain_db: 20
+  # Front-end RF amplifier (+14 dB). Off by default: it overloads easily
+  # near strong emitters and creates intermodulation artifacts.
+  amp_enabled: false
+  # Crystal error correction in parts-per-million.
+  freq_correction_ppm: 0.0
+
+dsp:
+  # FFT size (power of two). 4096 @ 10 MS/s -> ~2.44 kHz resolution.
+  fft_size: 4096
+  # Welch segment overlap fraction [0.0, 0.9].
+  overlap: 0.5
+  # Window function name understood by scipy.signal.get_window.
+  window: hann
+  # Samples per processing chunk. 262144 @ 10 MS/s -> ~26 ms per chunk.
+  chunk_samples: 262144
+  # Bins masked either side of DC to suppress the HackRF DC spike.
+  dc_mask_bins: 3
+
+detection:
+  energy:
+    enabled: true
+    # A bin fires when it exceeds the adaptive baseline threshold.
+    min_bins: 2          # minimum contiguous bins to form a detection
+    merge_gap_bins: 2    # bridge gaps up to this many bins wide
+  cfar:
+    enabled: true
+    guard_bins: 4        # cells adjacent to the cell-under-test, excluded
+    train_bins: 24       # training cells each side used for noise estimate
+    quantile: 0.75       # order statistic used by OS-CFAR
+    offset_db: 9.0       # detection margin above the OS noise estimate
+    min_bins: 2
+    merge_gap_bins: 2
+  # Warn when this fraction of samples in a chunk is near full scale.
+  clip_fraction_warn: 0.001
+
+baseline:
+  # Per-bin adaptive background model (asymmetric EWMA).
+  alpha_up: 0.02       # slow rise: resists baseline poisoning
+  alpha_down: 0.2      # fast fall: recovers quickly when signals vanish
+  spread_alpha: 0.05   # smoothing for the per-bin deviation estimate
+  k_mad: 6.0           # threshold = level + max(k_mad * spread, min_delta_db)
+  min_delta_db: 6.0
+  # Extra damping applied to bins currently above threshold (anti-poisoning).
+  hot_bin_damping: 0.1
+  path: data/baseline.npz
+
+sweep:
+  # Fraction of the sample rate used as analysis bandwidth per step
+  # (HackRF filter edges roll off; adjacent steps overlap accordingly).
+  usable_fraction: 0.75
+  # Chunks discarded after each retune (LO settling transient).
+  settle_chunks: 1
+  # Named baseline environments are saved under this directory.
+  environments_dir: data/environments
+  # Frequency regions to cycle through. These are PRESETS, not facts:
+  # legal allocations and drone equipment vary by country and vendor -
+  # adjust them for your region. Priority breaks ties between due steps;
+  # revisit_s controls how often a band is rescanned (0 = continuous).
+  bands:
+    - name: ism_2400          # 2.4 GHz ISM: most consumer drone C2 links
+      start_hz: 2400000000
+      stop_hz: 2483500000
+      enabled: true
+      priority: 2
+      dwell_s: 0.5
+      revisit_s: 0.0
+    - name: video_5800        # 5.8 GHz: analog/digital FPV video links
+      start_hz: 5725000000
+      stop_hz: 5875000000
+      enabled: true
+      priority: 1
+      dwell_s: 0.5
+      revisit_s: 0.0
+    - name: telemetry_915     # 902-928 MHz ISM (region 2 only!): telemetry
+      start_hz: 902000000
+      stop_hz: 928000000
+      enabled: false
+      priority: 1
+      dwell_s: 0.5
+      revisit_s: 10.0
+    - name: rc_433            # 433 MHz ISM (region 1): long-range RC/ELRS
+      start_hz: 433050000
+      stop_hz: 434790000
+      enabled: false
+      priority: 1
+      dwell_s: 0.5
+      revisit_s: 10.0
+  # Detections whose center falls inside an exclusion are suppressed
+  # (mark known local emitters here), e.g.:
+  #   - start_hz: 2431000000
+  #     stop_hz: 2442000000
+  exclusions: []
+  # Adaptive rescanning: steps with recent detections are revisited
+  # sooner for a few rounds.
+  adaptive:
+    enabled: true
+    hot_revisit_s: 1.0
+    hot_visits: 3
+  # Short triggered IQ captures (a few chunks around a persistent-track
+  # promotion). Off by default: storage and privacy.
+  capture:
+    enabled: false
+    dir: data/captures
+    max_files: 20
+    chunks_per_event: 2
+
+# Stage 4: drone-oriented analytics and confidence fusion.
+analytics:
+  enabled: true
+  assessment_interval_s: 2.0
+  # An entity's category changes are announced at most once per cooldown
+  # unless the category escalates (escalations are always immediate).
+  emit_cooldown_s: 30.0
+  min_track_hits: 3
+  multiband_window_s: 5.0
+  multiband_min_separation_hz: 200000000
+  # Category thresholds on fused confidence [0,1]. The vocabulary is
+  # capped at "high_confidence_drone_activity" - "confirmed" does not
+  # exist and cannot be configured into existence.
+  background_max: 0.20
+  unclassified_max: 0.45
+  possible_max: 0.65
+  probable_max: 0.85
+  # confidence = sigmoid(sum(w*evidence) - sum(p*penalty) - bias)
+  weights:
+    anomaly: 1.0
+    burst: 1.5
+    hopping: 2.0
+    emi: 1.0              # supporting evidence only; EMI-alone is capped
+    multiband: 2.0
+    wifi_penalty: 1.5
+    bt_penalty: 1.2
+    fixed_penalty: 1.5
+    clipping_penalty: 2.0
+    single_obs_penalty: 1.0
+    bias: 2.0
+  hopping:
+    window_s: 3.0
+    min_channels: 5
+    max_channel_bw_hz: 2000000
+    channel_tolerance_hz: 500000
+  emi:
+    min_harmonics: 4
+    spacing_tolerance: 0.15
+    max_peak_bw_hz: 500000
+  background:
+    wifi_bw_min_hz: 8000000
+    wifi_bw_max_hz: 25000000
+    wifi_grid_tolerance_hz: 3000000
+    fixed_min_age_s: 60.0
+    fixed_min_occupancy: 0.95
+  burst:
+    min_bursts: 2
+    duty_min: 0.02
+    duty_max: 0.7
+    period_cv_max: 0.5
+
+# Stage 6: optional ML subsystem. DISABLED until you train a model on
+# your own labeled observations:
+#   1. label events:      drone4rf ml label --event-id N --label drone
+#      (or the GUI's false-positive button for the other class)
+#   2. build the dataset: drone4rf ml build-dataset --site mysite
+#   3. train + review:    drone4rf ml train
+#   4. set enabled: true
+# Inference is CPU-only (scikit-learn). The classifier's calibrated
+# P(drone) becomes one more fusion term; uncertain classifications are
+# rejected and contribute nothing.
+ml:
+  enabled: false
+  model_path: data/ml/model.joblib
+  anomaly_model_path: ""
+  min_calibrated_confidence: 0.6
+
+tracking:
+  # Detections within this frequency distance join an existing track.
+  match_tolerance_hz: 200000
+  # A track is reported as persistent after this many hits.
+  promote_hits: 5
+  # A track is closed after this many consecutive misses.
+  drop_after_misses: 10
+
+storage:
+  database_path: data/events.db
+  log_level: INFO

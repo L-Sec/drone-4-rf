@@ -1,0 +1,136 @@
+# drone4rf site configuration - TEMPLATE.
+#
+#   copy config/local.example.yaml config/local.yaml
+#
+# and edit your copy (config/local.yaml is git-ignored, because gain
+# settings, exclusion ranges and band plans describe your site).
+#
+# This template differs from config/default.yaml only in using a reduced
+# FFT overlap (0.25), which roughly halves CPU cost per chunk. On a
+# mid-range laptop 10 MS/s with 0.5 overlap dropped ~40% of chunks;
+# 0.25 dropped none. Raise it again if your machine keeps up.
+#
+# All values are validated at load time (see drone4rf/config.py).
+# Frequencies are in Hz, gains in dB, times in seconds.
+#
+# LEGAL NOTICE: You are responsible for complying with local radio,
+# aviation, surveillance, and privacy laws. This tool is receive-only.
+
+device:
+  # SoapySDR driver key: hackrf | rtlsdr | airspy | lime | uhd | sdrplay
+  driver: hackrf
+  # HackRF supports 2-20 MS/s; below ~8 MS/s its baseband filters degrade.
+  sample_rate: 10000000
+  # Default: middle of the 2.4 GHz ISM band (Wi-Fi channel 6 region).
+  center_freq_hz: 2437000000
+  # HackRF LNA (IF) gain: 0-40 dB in 8 dB steps. Conservative default.
+  lna_gain_db: 16
+  # HackRF VGA (baseband) gain: 0-62 dB in 2 dB steps.
+  vga_gain_db: 20
+  # Front-end RF amplifier (+14 dB). Off by default: it overloads easily
+  # near strong emitters and creates intermodulation artifacts.
+  amp_enabled: false
+  # Crystal error correction in parts-per-million.
+  freq_correction_ppm: 0.0
+
+dsp:
+  # FFT size (power of two). 4096 @ 10 MS/s -> ~2.44 kHz resolution.
+  fft_size: 4096
+  # Welch segment overlap fraction [0.0, 0.9]. 0.25 halves CPU cost vs
+  # 0.5 - see the note at the top of this file.
+  overlap: 0.25
+  # Window function name understood by scipy.signal.get_window.
+  window: hann
+  # Samples per processing chunk. 262144 @ 10 MS/s -> ~26 ms per chunk.
+  chunk_samples: 262144
+  # Bins masked either side of DC to suppress the HackRF DC spike.
+  dc_mask_bins: 3
+
+detection:
+  energy:
+    enabled: true
+    # A bin fires when it exceeds the adaptive baseline threshold.
+    min_bins: 2          # minimum contiguous bins to form a detection
+    merge_gap_bins: 2    # bridge gaps up to this many bins wide
+  cfar:
+    enabled: true
+    guard_bins: 4        # cells adjacent to the cell-under-test, excluded
+    train_bins: 24       # training cells each side used for noise estimate
+    quantile: 0.75       # order statistic used by OS-CFAR
+    offset_db: 9.0       # detection margin above the OS noise estimate
+    min_bins: 2
+    merge_gap_bins: 2
+  # Warn when this fraction of samples in a chunk is near full scale.
+  clip_fraction_warn: 0.001
+
+baseline:
+  # Per-bin adaptive background model (asymmetric EWMA).
+  alpha_up: 0.02       # slow rise: resists baseline poisoning
+  alpha_down: 0.2      # fast fall: recovers quickly when signals vanish
+  spread_alpha: 0.05   # smoothing for the per-bin deviation estimate
+  k_mad: 6.0           # threshold = level + max(k_mad * spread, min_delta_db)
+  min_delta_db: 6.0
+  # Extra damping applied to bins currently above threshold (anti-poisoning).
+  hot_bin_damping: 0.1
+  path: data/baseline.npz
+
+sweep:
+  usable_fraction: 0.75
+  settle_chunks: 1
+  environments_dir: data/environments
+  bands:
+    - name: ism_2400
+      start_hz: 2400000000
+      stop_hz: 2483500000
+      enabled: true
+      priority: 2
+      dwell_s: 0.5
+      revisit_s: 0.0
+    - name: video_5800
+      start_hz: 5725000000
+      stop_hz: 5875000000
+      enabled: true
+      priority: 1
+      dwell_s: 0.5
+      revisit_s: 0.0
+  # List known local emitters here after calibrating, so their detections
+  # stop generating assessments. Typical entries are your own Wi-Fi
+  # channel and any switching-supply harmonic comb near the antenna
+  # (both are common and both look "interesting" to the analytics).
+  # Example:
+  # exclusions:
+  #   - start_hz: 2431000000
+  #     stop_hz: 2442000000
+  exclusions: []
+  adaptive:
+    enabled: true
+    hot_revisit_s: 1.0
+    hot_visits: 3
+  capture:
+    enabled: false
+    dir: data/captures
+    max_files: 20
+    chunks_per_event: 2
+
+# Stage 4 analytics: the defaults are a reasonable start; see default.yaml
+# for the full commented reference.
+analytics:
+  enabled: true
+  assessment_interval_s: 2.0
+
+# Stage 6 ML: enable after training on this site's labeled events
+# (see default.yaml for the workflow).
+ml:
+  enabled: false
+
+tracking:
+  # Detections within this frequency distance join an existing track.
+  match_tolerance_hz: 200000
+  # A track is reported as persistent after this many hits.
+  promote_hits: 5
+  # A track is closed after this many consecutive misses.
+  drop_after_misses: 10
+
+storage:
+  database_path: data/events.db
+  log_level: INFO
